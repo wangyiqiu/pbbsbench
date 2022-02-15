@@ -419,6 +419,38 @@ void k_nearest_leaf(vtx* p, node* T, int k) {
     box root_box = o_tree::update_boxes(R);
   }
 
+void batch_insert(parlay::slice<vtx**, vtx**> v, node* R, box b, double Delta){
+    size_t vsize = v.size();
+    //make sure all the points are within the bounding box of the initial tree
+    box points_box = o_tree::get_box(v);
+    int dims = v[0]->pt.dimension();
+    bool ll_bad = false;
+    bool ur_bad = false;
+    for(int i=0; i<dims; i++){
+      if(points_box.first[i] < b.first[i]){
+        ll_bad = true;
+      }
+      if(points_box.second[i] > b.second[i]){
+        ur_bad = true;
+      }
+    }
+    if(ll_bad || ur_bad){
+      std::cout << "ERROR: points not contained in bounding box of data structure" << std::endl;
+      abort();
+    }
+    parlay::sequence<indexed_point> idpts; 
+    idpts = parlay::sequence<indexed_point>(vsize);
+    auto points = parlay::delayed_seq<indexed_point>(vsize, [&] (size_t i) -> indexed_point {
+  return std::make_pair(o_tree::interleave_bits(v[i]->pt, b.first, Delta), v[i]);
+      });
+    auto less = [] (indexed_point a, indexed_point b){
+      return a.first < b.first; 
+    };
+    auto x = parlay::sort(points, less);
+    batch_insert0(parlay::make_slice(x), R);
+    box root_box = o_tree::update_boxes(R);
+  }
+
   void batch_delete0(slice_t idpts, node* R){
     if(idpts.size()==0) return;
     R->set_flag(true);
@@ -465,6 +497,23 @@ void k_nearest_leaf(vtx* p, node* T, int k) {
     o_tree::compress(R);  
     box root_box = o_tree::update_boxes(R);
   }
+
+  void batch_delete(parlay::slice<vtx**, vtx**> v, node* R, box b, double Delta){
+    size_t vsize = v.size();
+    parlay::sequence<indexed_point> idpts; 
+    idpts = parlay::sequence<indexed_point>(vsize);
+    auto points = parlay::delayed_seq<indexed_point>(vsize, [&] (size_t i) -> indexed_point {
+      return std::make_pair(o_tree::interleave_bits(v[i]->pt, b.first, Delta), v[i]);
+    });
+    auto less = [] (indexed_point a, indexed_point b){
+      return a.first < b.first; 
+    };
+    auto x = parlay::sort(points, less); 
+    batch_delete0(parlay::make_slice(x), R);
+    o_tree::compress(R);  
+    box root_box = o_tree::update_boxes(R);
+  }
+
 
 }; //this ends the k_nearest_neighbors structure
 

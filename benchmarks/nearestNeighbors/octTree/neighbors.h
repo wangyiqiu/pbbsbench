@@ -48,14 +48,6 @@ void ANN(parlay::sequence<vtx*> &v, int k) {
 
     // create sequences for insertion and deletion
     size_t size = v.size(); 
-    size_t p = .5*size;
-    parlay::sequence<vtx*> v1 = parlay::sequence<vtx*>(p);
-    parlay::sequence<vtx*> v2 = parlay::sequence<vtx*>(p);
-    parlay::parallel_for(0, size, [&] (size_t i){
-      if(i<p) v1[i] = v[i];
-      else v2[i-p] = v[i];
-    }, 1
-    );
 
     //build tree with optional box
     knn_tree T(v, whole_box);
@@ -66,15 +58,39 @@ void ANN(parlay::sequence<vtx*> &v, int k) {
     node* root = T.tree.get();
     box_delta bd = T.get_box_delta(dims);
 
+    std::cout << "DYNAMIC UPDATES\n";
+
     //batch-dynamic deletion
-    T.batch_delete(v2, root, bd.first, bd.second);
-    t.next("batch deletion");
+
+    int rounds = 10;
+    int batch = size / rounds - 1; // -1 avoids deleting the root and its children
+
+    parlay::sequence<double> delTime(rounds);
+    parlay::sequence<double> insTime(rounds);
+
+    for (int r = 0; r < rounds; ++ r) {
+      T.batch_delete(v.cut(r * batch, r * batch + batch),
+        root, bd.first, bd.second);
+      delTime[r] = t.get_next();
+    }
 
     //batch-dynamic insertion
-    T.batch_insert(v2, root, bd.first, bd.second);
-    t.next("batch insertion");
 
+    for (int r = 0; r < rounds; ++ r) {
+      T.batch_insert(v.cut(r * batch, r * batch + batch),
+        root, bd.first, bd.second);
+      insTime[r] = t.get_next();
+    }
 
+    std::cout << " deletion-per-round = ";
+    for (auto x: delTime) std::cout << x << " ";
+    std::cout << "\n deletion-average = "
+      << double(parlay::reduce(delTime)) / rounds << std::endl;
+
+    std::cout << " insertion-per-round = ";
+    for (auto x: insTime) std::cout << x << " ";
+    std::cout << "\n insertion-average = "
+      << double(parlay::reduce(insTime)) / rounds << std::endl;
 
     if (report_stats) 
       std::cout << "depth = " << T.tree->depth() << std::endl;
